@@ -542,17 +542,42 @@ class MoE(nn.Module):
         # See [Why detach?] in `get_send_buf`
         self.token_gather_buf.grad = None
         return self.token_gather_buf.detach()
-
-    def forward(self, hidden_states):
-        identity = hidden_states
-        orig_shape = hidden_states.shape
-        # for each token, select top-k experts, and compute the weight for each expert
-        topk_idx, topk_weight = self.gate(hidden_states)
-        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        y = self.moe_forward(hidden_states, topk_idx, topk_weight).view(*orig_shape)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        shape = x.size()
+        x = x.view(-1, self.dim)
+        topk_weights, topk_indices = self.gate(x)
+        y = torch.zeros_like(x)
+        counts = cast(list[int],torch.bincount(topk_indices.flatten(), minlength=self.n_routed_experts).tolist(),  # type: ignore
+                      )
+        #for i in range(self.experts_start_idx, self.experts_end_idx):
+        for i, expert_i in enumerate(self.experts.values()):
+            if counts[i] == 0 or i < self.experts_start_idx or i >=self.experts_end_idx:
+                continue
+            expert = expert_i
+            idx, top = torch.where(topk_indices == i)
+            y[idx] += expert(x[idx]) * topk_weights[idx, top, None]
+        if len(self._mesh.get_global_peers()) > 1:
+            dist.all_reduce(y)  # type: ignore
         if self.config.n_shared_experts is not None:
-            y = y + self.shared_experts(identity)
-        return y
+            z = self.shared_experts(x)
+
+            return (y + z).view(shape)  # type: ignore
+        else:
+            return y.view(shape)
+
+
+
+    # def forward(self, hidden_states):
+    #     identity = hidden_states
+    #     orig_shape = hidden_states.shape
+    #     # for each token, select top-k experts, and compute the weight for each expert
+    #     topk_idx, topk_weight = self.gate(hidden_states)
+    #     hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+    #     y = self.moe_forward(hidden_states, topk_idx, topk_weight).view(*orig_shape)
+    #     if self.config.n_shared_experts is not None:
+    #         y = y + self.shared_experts(identity)
+    #     return y
 
     def moe_forward(self, x, topk_ids, topk_weight):
         # This part sorts the token indices so that tokens routed to the same expert reside consecutively.
@@ -748,21 +773,8 @@ class Attention(nn.Module):
         else:
             scaling_type = self.config.rope_scaling["type"]
             scaling_factor = self.config.rope_scaling["factor"]
-            if scaling_type == "linear":
-                self.rotary_emb = LinearScalingRotaryEmbedding(
-                    self.qk_rope_head_dim,
-                    max_position_embeddings=self.max_position_embeddings,
-                    scaling_factor=scaling_factor,
-                    base=self.rope_theta,
-                )
-            elif scaling_type == "dynamic":
-                self.rotary_emb = DynamicNTKScalingRotaryEmbedding(
-                    self.qk_rope_head_dim,
-                    max_position_embeddings=self.max_position_embeddings,
-                    scaling_factor=scaling_factor,
-                    base=self.rope_theta,
-                )
-            elif scaling_type == "yarn":
+
+            if scaling_type == "yarn":
                 kwargs = {
                     key: self.config.rope_scaling[key]
                     for key in [
