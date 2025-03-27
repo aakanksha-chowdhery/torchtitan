@@ -545,7 +545,7 @@ class MoE(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         shape = x.size()
-        x = x.view(-1, self.dim)
+        x = x.view(-1, x.shape[-1])
         topk_weights, topk_indices = self.gate(x)
         y = torch.zeros_like(x)
         counts = cast(list[int],torch.bincount(topk_indices.flatten(), minlength=self.n_routed_experts).tolist(),  # type: ignore
