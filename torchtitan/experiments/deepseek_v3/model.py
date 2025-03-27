@@ -476,6 +476,8 @@ class MoE(nn.Module):
         # IDs while avoiding `None` experts. The absolute expert IDs match
         # with checkpoint FQNs.
         self.experts = nn.ModuleDict()
+        self.experts_start_idx = self.ep_rank * self.experts_per_rank
+        self.experts_end_idx = self.ep_rank * self.experts_per_rank + self.experts_per_rank
         for i in range(self.experts_per_rank):
             abs_expert_id = self.ep_rank * self.experts_per_rank + i
             self.experts[str(abs_expert_id)] = MLP(
