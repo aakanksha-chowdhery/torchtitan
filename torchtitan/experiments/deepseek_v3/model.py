@@ -550,11 +550,11 @@ class MoE(nn.Module):
         topk_weights, topk_indices = self.gate(x)
         x = x.view(-1, x.shape[-1])
         y = torch.zeros_like(x)
-        counts = cast(list[int],torch.bincount(topk_indices.flatten(), minlength=self.config.n_routed_experts).tolist(),  # type: ignore
-                      )
+        # counts = cast(list[int],torch.bincount(topk_indices.flatten(), minlength=self.config.n_routed_experts).tolist(),  # type: ignore
+        #               )
         #for i in range(self.experts_start_idx, self.experts_end_idx):
         for i, expert_i in enumerate(self.experts.values()):
-            if counts[i] == 0 or i < self.experts_start_idx or i >=self.experts_end_idx:
+            if  i < self.experts_start_idx or i >=self.experts_end_idx:
                 continue
             expert = expert_i
             idx, top = torch.where(topk_indices == i)
