@@ -51,17 +51,35 @@ def get_group(dim_name: Optional[str] = None) -> dist.ProcessGroup:
 
 
 class RMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
+  """Root Mean Square Layer Normalization."""
 
-    def forward(self, hidden_states):
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.to(torch.float32)
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-        return self.weight * hidden_states.to(input_dtype)
+  def __init__(self, dim: int, eps: float = 1e-6):
+    """_summary_
+
+    Args:
+        dim: Hidden dimension size to normalize over
+        eps: Small constant for numerical stability when dividing. Defaults to 1e-6.
+    """
+    super().__init__()  # type: ignore
+    self.eps = eps
+    self.weight = nn.Parameter(torch.ones(dim))
+
+  def forward(self, x: torch.Tensor):
+    """Apply RMS normalization to input tensor.
+
+    Normalizes the last dimension of the input tensor by its root mean square,
+    then applies a learned scaling factor.
+
+    Args:
+        x: Input tensor of shape [..., dim]
+
+    Returns:
+        Normalized tensor of same shape as input, with same dtype as self.weight
+    """
+    x = x.to(torch.float32)
+    variance = x.pow(2).mean(-1, keepdim=True)
+    y = x * torch.rsqrt(variance + self.eps)
+    return y.type_as(self.weight) * self.weight
 
 
 class RotaryEmbedding(nn.Module):
