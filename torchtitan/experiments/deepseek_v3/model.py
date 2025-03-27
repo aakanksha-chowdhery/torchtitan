@@ -41,7 +41,7 @@ from model_config import ModelArgs
 from symm_mem_recipes import OnDeviceAllToAllV
 from torch import nn
 from torch.distributed._functional_collectives import all_to_all_single_autograd
-from typing import Literal, Optional, Tuple, cast, override
+from typing import Optional, Tuple, cast
 
 
 # Get model parallel subgroup by name:
