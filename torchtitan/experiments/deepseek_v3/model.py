@@ -1281,10 +1281,10 @@ class DeepseekForCausalLM(torch.nn.Module):
             )
         return reordered_past
 
-    # Setup Symmetric Memory for MoE token shuffle.
-    # Supports inference currently.
-    def setup_symm_mem(self, dtype: torch.dtype, device: torch.device):
-        for layer in self.model.layers.values():
-            if not isinstance(layer.mlp, MoE):
-                continue
-            layer.mlp.setup_symm_mem(dtype, device)
+    # # Setup Symmetric Memory for MoE token shuffle.
+    # # Supports inference currently.
+    # def setup_symm_mem(self, dtype: torch.dtype, device: torch.device):
+    #     for layer in self.model.layers.values():
+    #         if not isinstance(layer.mlp, MoE):
+    #             continue
+    #         layer.mlp.setup_symm_mem(dtype, device)
