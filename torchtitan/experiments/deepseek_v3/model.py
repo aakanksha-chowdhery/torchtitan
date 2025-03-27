@@ -125,108 +125,92 @@ class RotaryEmbedding(nn.Module):
         )
 
 
-class LinearScalingRotaryEmbedding(RotaryEmbedding):
-    """RotaryEmbedding extended with linear scaling. Credits to the Reddit user /u/kaiokendev"""
-
-    def __init__(
-        self,
-        dim,
-        max_position_embeddings=2048,
-        base=10000,
-        device=None,
-        scaling_factor=1.0,
-    ):
-        self.scaling_factor = scaling_factor
-        super().__init__(dim, max_position_embeddings, base, device)
-
-    def _set_cos_sin_cache(self, seq_len, device, dtype):
-        self.max_seq_len_cached = seq_len
-        t = torch.arange(
-            self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype
-        )
-        t = t / self.scaling_factor
-
-        freqs = torch.outer(t, self.inv_freq)
-        # Different from paper, but it uses a different permutation in order to obtain the same calculation
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
-        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-
-
-# Copied from transformers.models.llama.modeling_llama.LlamaDynamicNTKScalingRotaryEmbedding with Llama->Deepseek
-class DynamicNTKScalingRotaryEmbedding(RotaryEmbedding):
-    """RotaryEmbedding extended with Dynamic NTK scaling. Credits to the Reddit users /u/bloc97 and /u/emozilla"""
-
-    def __init__(
-        self,
-        dim,
-        max_position_embeddings=2048,
-        base=10000,
-        device=None,
-        scaling_factor=1.0,
-    ):
-        self.scaling_factor = scaling_factor
-        super().__init__(dim, max_position_embeddings, base, device)
-
-    def _set_cos_sin_cache(self, seq_len, device, dtype):
-        self.max_seq_len_cached = seq_len
-
-        if seq_len > self.max_position_embeddings:
-            base = self.base * (
-                (self.scaling_factor * seq_len / self.max_position_embeddings)
-                - (self.scaling_factor - 1)
-            ) ** (self.dim / (self.dim - 2))
-            inv_freq = 1.0 / (
-                base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim)
-            )
-            self.register_buffer("inv_freq", inv_freq, persistent=False)
-
-        t = torch.arange(
-            self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype
-        )
-
-        freqs = torch.outer(t, self.inv_freq)
-        # Different from paper, but it uses a different permutation in order to obtain the same calculation
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
-        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-
-
 # Inverse dim formula to find dim based on number of rotations
 def yarn_find_correction_dim(
-    num_rotations, dim, base=10000, max_position_embeddings=2048
-):
-    return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (
-        2 * math.log(base)
-    )
+  num_rotations: int, dim: int, base: float, max_position_embeddings: int
+) -> float:
+  """Calculate dimension for a specific number of rotations in YaRN.
+
+  Args:
+      num_rotations: Target rotation count
+      dim: Hidden dimension
+      base: RoPE theta value
+      max_position_embeddings: Maximum position embeddings length
+
+  Returns:
+      Correction dimension
+  """
+  return (
+    dim
+    * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))
+    / (2 * math.log(base))
+  )
 
 
 # Find dim range bounds based on rotations
 def yarn_find_correction_range(
-    low_rot, high_rot, dim, base=10000, max_position_embeddings=2048
-):
-    low = math.floor(
-        yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings)
-    )
-    high = math.ceil(
-        yarn_find_correction_dim(high_rot, dim, base, max_position_embeddings)
-    )
-    return max(low, 0), min(high, dim - 1)  # Clamp values just in case
+  low_rot: int,
+  high_rot: int,
+  dim: int,
+  base: float=10000,
+  max_position_embeddings: int =2048,
+) -> Tuple[int, int]:
+  """Find dimension range for YaRN interpolation.
+
+  Args:
+      low_rot: Low-frequency rotations parameter
+      high_rot: High-frequency rotations parameter
+      dim: Hidden dimension
+      base: RoPE theta value
+      max_position_embeddings: Maximum position embeddings length
+
+  Returns:
+      Tuple of (low_dim, high_dim) indices for interpolation
+  """
+  low = math.floor(
+    yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings)
+  )
+  high = math.ceil(
+    yarn_find_correction_dim(high_rot, dim, base, max_position_embeddings)
+  )
+  return max(low, 0), min(high, dim - 1)  # Clamp values just in case
 
 
-def yarn_get_mscale(scale=1, mscale=1):
-    if scale <= 1:
-        return 1.0
-    return 0.1 * mscale * math.log(scale) + 1.0
+def yarn_get_mscale(scale: float = 1.0, mscale: float = 1.0) -> float:
+  """Calculate mscale factor for YaRN scaling.
+
+  Args:
+      scale: Scaling factor for context extension
+      mscale: Base mscale parameter
+
+  Returns:
+      Computed mscale value
+  """
+  if scale <= 1:
+    return 1.0
+  return 0.1 * mscale * math.log(scale) + 1.0
 
 
-def yarn_linear_ramp_mask(min, max, dim):
-    if min == max:
-        max += 0.001  # Prevent singularity
+def yarn_linear_ramp_mask(
+  min_val: float, max_val: float, dim: int
+) -> torch.Tensor:
+  """Create linear ramp mask for YaRN interpolation.
 
-    linear_func = (torch.arange(dim, dtype=torch.float32) - min) / (max - min)
-    ramp_func = torch.clamp(linear_func, 0, 1)
-    return ramp_func
+  Args:
+      min_val: Minimum value for ramp
+      max_val: Maximum value for ramp
+      dim: Dimension size
+
+  Returns:
+      Tensor with ramp values
+  """
+  if min_val == max_val:
+    max_val += 0.001  # Prevent singularity
+  linear_func = (torch.arange(dim, dtype=torch.float32) - min_val) / (
+    max_val - min_val
+  )
+  ramp_func = torch.clamp(linear_func, 0, 1)
+  return ramp_func
 
 
 class YarnRotaryEmbedding(RotaryEmbedding):
